@@ -1,2 +1,2 @@
 # Insights
-Ideias e curiosidades 
+Ideias e curiosidades que podem ser solucionadas através do R
