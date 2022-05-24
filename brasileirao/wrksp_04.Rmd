@@ -1,0 +1,489 @@
+---
+title: "Tabela do Brasileirão por temporada"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows # or columns
+    vertical_layout: fill # or 
+    #theme: bootstrap
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(lubridate)
+
+dados <- readr::read_csv('https://raw.githubusercontent.com/williamorim/brasileirao/master/data-raw/csv/matches.csv')
+
+source('utils_wrksp_04.R')
+```
+
+Visão Geral
+==============================================================================
+
+Row {data-height=150}
+-----------------------------------------------------------------------
+
+### Sobre
+
+Dashboard analisando os dados do Campeonato Brasileiro de Futebol Masculino de 2003 a 2022. Queremos comparar estatísticas do campeonato vigente com as séries históricas.
+
+Os dados estão disponíveis no pacote [aqui](https://raw.githubusercontent.com/williamorim/brasileirao/master/data-raw/csv/matches.csv).
+
+Criado a partir das aulas do Workshop Ciência de Dados na Prática, da [Curso-r](https://curso-r.com/), turma inicíada em março de 2022.
+
+
+
+Row
+-----------------------------------------------------------------------
+
+### Média de gols por partida
+
+```{r}
+tab_media_gols <- dados %>%
+  filter(score != 'x') %>% 
+  group_by(season) %>% 
+  summarise(
+    num_gols = contar_num_gols(score),
+    num_partidas = n()
+  ) %>% 
+    mutate(
+      media_gols = num_gols/num_partidas
+    )
+
+media_gols_atual <- tab_media_gols %>% 
+  filter((season == max(season))) %>% 
+  pull(media_gols) %>% 
+  scales::number(decimal.mark = ',', accuracy = 0.01)
+
+valueBox(
+  media_gols_atual,
+  icon = 'ion-ios-football',
+  caption = glue::glue('Média de gols por partida em {max(tab_media_gols$season)}'))
+
+```
+
+### Proporção de vitória dos mandantes
+
+```{r}
+tab_vencedores <- dados %>% 
+  filter(score != 'x') %>% 
+  mutate(
+    vencedor = purrr::map_chr(score, verificar_vencedor)
+  ) %>% 
+  count(season, vencedor) %>% 
+  group_by(season) %>% 
+  mutate(proporcao = n / sum(n)) %>% 
+  ungroup()
+
+proporcao_vit_mandantes <- tab_vencedores %>% 
+  filter(season == max(season), vencedor == 'mandante') %>% 
+  pull(proporcao) %>% 
+  scales::percent(accuracy = 0.1, big.mark = '.', decimal.mark = ',')
+  
+valueBox(
+  proporcao_vit_mandantes,
+  icon = "ion-android-home",
+  caption = glue::glue('Proporção de vitória dos mandantes em {max(tab_vencedores$season)}'))
+```
+
+### Proporção de vitória dos visitantes
+
+```{r}
+proporcao_vit_visitantes <- tab_vencedores %>% 
+  filter(season == max(season), vencedor == 'visitante') %>% 
+  pull(proporcao) %>% 
+  scales::percent(accuracy = 0.1, big.mark = '.', decimal.mark = ',')
+  
+valueBox(
+  proporcao_vit_visitantes,
+  icon = 'ion-plane',
+  caption = glue::glue('Proporção de vitória dos visitantes em {max(tab_vencedores$season)}'))
+```
+
+Row {.tabset}
+-----------------------------------------------------------------------
+
+### Média de gols por partida
+
+```{r}
+tab_media_gols %>% 
+  mutate(season = as.character(season)) %>% 
+  echarts4r::e_chart(x = season) %>% 
+  echarts4r::e_line(serie = media_gols) %>% 
+  echarts4r::e_tooltip()
+
+```
+
+
+### Proporção de vitória dos mandantes
+
+```{r}
+tab_vencedores %>% 
+  mutate(season = as.character(season),
+         proporcao = 100*proporcao) %>%
+  filter(vencedor == 'mandante') %>% 
+  echarts4r::e_chart(x = season) %>% 
+  echarts4r::e_line(serie = proporcao) %>% 
+  echarts4r::e_tooltip()
+
+```
+
+### Proporção de vitória dos visitantes
+
+```{r}
+tab_vencedores %>% 
+  mutate(season = as.character(season),
+         proporcao = 100*proporcao) %>%
+  filter(vencedor == 'visitante') %>% 
+  echarts4r::e_chart(x = season) %>% 
+  echarts4r::e_line(serie = proporcao) %>% 
+  echarts4r::e_tooltip()
+```
+
+
+Tabela
+========================================================================
+
+```{r}
+tab_mandantes <- dados %>% 
+  filter(score != 'x') %>%
+  mutate(
+    vencedor = purrr::map_chr(score, verificar_vencedor)
+  ) %>%
+  count(season, home, vencedor) %>% 
+  pivot_wider(names_from = vencedor, values_from = n) %>% 
+  rename(
+    team = home,
+    empate_home = empate,
+    vitoria_home = mandante,
+    derrota_home = visitante
+  )
+
+tab_visitante <- dados %>%
+  filter(score != 'x') %>%
+  mutate(
+    vencedor = purrr::map_chr(score, verificar_vencedor)
+  ) %>%
+  count(season, away, vencedor) %>% 
+  pivot_wider(names_from = vencedor, values_from = n) %>% 
+  rename(
+    team = away,
+    empate_away = empate,
+    derrota_away = mandante,
+    vitoria_away = visitante
+  )
+
+tabela <- tab_visitante %>% 
+  left_join(tab_mandantes, by = c('season', 'team')) %>% 
+  rowwise() %>% 
+  mutate(
+    vitorias = sum(c(vitoria_away, vitoria_home), na.rm = TRUE),
+    empates = sum(c(empate_away, empate_home), na.rm = TRUE),
+    derrotas = sum(c(derrota_away, derrota_home), na.rm = TRUE),
+    jogos = vitorias + empates + derrotas,
+    pontos = vitorias*3 + empates,
+    aproveitamento = pontos/(jogos*3)
+  )
+```
+
+
+Row {.tabset}
+-----------------------------------------------------------------------
+
+### 2003
+
+```{r}
+
+tabela %>%
+  filter(season == 2003) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos','V', 'E', 'D', 'Apr.')) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+
+```
+### 2004
+
+```{r}
+
+tabela %>%
+  filter(season == 2004) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2005
+
+```{r}
+
+tabela %>%
+  filter(season == 2005) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+    ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2006
+
+```{r}
+
+tabela %>%
+  filter(season == 2006) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+    ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2007
+
+```{r}
+
+tabela %>%
+  filter(season == 2007) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+    ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2008
+
+```{r}
+
+tabela %>%
+  filter(season == 2008) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+  ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2009
+
+```{r}
+
+tabela %>%
+  filter(season == 2009) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+  ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2010
+
+```{r}
+
+tabela %>%
+  filter(season == 2010) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+  ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2011
+
+```{r}
+
+tabela %>%
+  filter(season == 2011) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+  ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2012
+
+```{r}
+
+tabela %>%
+  filter(season == 2012) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+  ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2013
+
+```{r}
+
+tabela %>%
+  filter(season == 2013) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+  ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2014
+
+```{r}
+
+tabela %>%
+  filter(season == 2014) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+  ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2015
+
+```{r}
+
+tabela %>%
+  filter(season == 2015) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+  ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2016
+
+```{r}
+
+tabela %>%
+  filter(season == 2016) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+  ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2017
+
+```{r}
+
+tabela %>%
+  filter(season == 2017) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+  ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2018
+
+```{r}
+
+tabela %>%
+  filter(season == 2018) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+  ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2019
+
+```{r}
+
+tabela %>%
+  filter(season == 2019) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+  ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2020
+
+```{r}
+
+tabela %>%
+  filter(season == 2020) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+  ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2021
+
+```{r}
+
+tabela %>%
+  filter(season == 2021) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+  ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
+
+### 2022
+
+```{r}
+
+tabela %>%
+  filter(season == 2022) %>% 
+  select(team, pontos, jogos, vitorias, empates, derrotas, aproveitamento) %>%
+  arrange(desc(pontos)) %>% 
+  DT::datatable(
+    options = list(bPaginate = FALSE, pageLength = 24, dom = 'tip'),
+    colnames = c('Time', 'Pontos', 'Jogos', 'V', 'E', 'D', 'Apr.')
+  ) %>% 
+  DT::formatPercentage('aproveitamento', 2)
+```
